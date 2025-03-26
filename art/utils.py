@@ -21,6 +21,8 @@ Module providing convenience functions.
 
 from __future__ import absolute_import, division, print_function, unicode_literals, annotations
 
+from enum import Enum
+import gzip
 import logging
 import math
 import os
@@ -33,11 +35,12 @@ import zipfile
 from collections.abc import Callable
 from functools import wraps
 from inspect import signature
-from typing import TYPE_CHECKING, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Optional, Tuple, Union, Any
 
 import numpy as np
 import pandas as pd
 import six
+from IPython.testing.tools import full_path
 from scipy.special import gammainc
 from sklearn.model_selection import train_test_split
 from tqdm.auto import tqdm
@@ -1534,13 +1537,13 @@ def load_nursery(
     return (x_train, y_train), (x_test, y_test), min_, max_
 
 
-def load_unsw_nb15(test_size: float = 0.2) -> DATASET_TYPE:
+def load_unsw_nb15(frac: float = 1.0, test_size: float = 0.2) -> tuple[tuple[Any, Any], tuple[Any, Any]]:
     """
     Loads the UNSW-NB15 dataset from `config.ART_DATA_PATH` or downloads it if necessary.
 
-    :param raw: `True` if no preprocessing should be applied to the data. Otherwise, data is normalized to 1.
-    :param test_size: percentage of set to use for testing. Remaining percentage is for training
-    :return: `(x_train, y_train), (x_test, y_test), min, max`
+    :param frac: percentage of the set to select
+    :param test_size: percentage of the selected set to use for testing. Remaining percentage is for training
+    :return: `(x_train, y_train), (x_test, y_test)`
     """
 
     dataset_path = get_file(
@@ -1561,16 +1564,15 @@ def load_unsw_nb15(test_size: float = 0.2) -> DATASET_TYPE:
     csv_files = sorted(csv_files, key=lambda x: int(re.search(r"(\d+)", x).group()))
 
     # Load and combine them into one DataFrame
-    unsw_df = pd.concat((pd.read_csv(file, header=0, low_memory=False) for file in csv_files), ignore_index=True)
+    unsw_df = (pd
+               .concat((pd.read_csv(file, header=0, low_memory=False) for file in csv_files), ignore_index=True)
+               .sample(frac=frac))
     y_full = unsw_df["attack_cat"]
     x_full = unsw_df.drop("attack_cat", axis=1)
 
-    min_val = np.min(x_full, axis=0)  # TODO: is this correct?
-    max_val = np.max(x_full, axis=0)
-
     x_train, x_test, y_train, y_test = train_test_split(x_full, y_full, test_size=test_size)
 
-    return (x_train, y_train), (x_test, y_test), min_val, max_val
+    return (x_train, y_train), (x_test, y_test)
 
 
 def load_dataset(
@@ -1601,31 +1603,122 @@ def load_dataset(
 
 
 def _extract(full_path: str, path: str) -> bool:
-    archive: Union[zipfile.ZipFile, tarfile.TarFile]
-    if full_path.endswith("tar"):  # pragma: no cover
-        if tarfile.is_tarfile(full_path):
-            archive = tarfile.open(full_path, "r:")
-    elif full_path.endswith("tar.gz"):  # pragma: no cover
-        if tarfile.is_tarfile(full_path):
-            archive = tarfile.open(full_path, "r:gz")
-    elif full_path.endswith("zip"):  # pragma: no cover
-        if zipfile.is_zipfile(full_path):
-            archive = zipfile.ZipFile(full_path)  # pylint: disable=consider-using-with
-        else:
-            return False
-    else:
-        return False
+    """
+    Extracts a TAR, TAR.GZ, or ZIP archive to the given path.
+
+    :param full_path: Path to the compressed file.
+    :param path: Destination folder to extract the contents.
+    :return: True if extraction succeeds, False otherwise.
+    """
+    archive = None  # Ensure `archive` is initialized
+    was_existing = os.path.exists(path)
 
     try:
-        archive.extractall(path)
-    except (tarfile.TarError, RuntimeError, KeyboardInterrupt):  # pragma: no cover
-        if os.path.exists(path):
-            if os.path.isfile(path):
-                os.remove(path)
-            else:
-                shutil.rmtree(path)
+        # Check if it's a TAR archive
+        if tarfile.is_tarfile(full_path):
+            mode = "r:gz" if full_path.endswith((".tar.gz", ".tgz")) else "r:"
+            with tarfile.open(full_path, mode) as archive:
+                archive.extractall(path)
+                print(f"✅ Extracted: {full_path} → {path}")
+                return True
+
+        # Check if it's a ZIP archive
+        elif zipfile.is_zipfile(full_path):
+            with zipfile.ZipFile(full_path) as archive:
+                archive.extractall(path)
+                print(f"✅ Extracted: {full_path} → {path}")
+                return True
+
+        # If it's neither TAR nor ZIP
+        else:
+            print(f"❌ ERROR: {full_path} is not a valid archive!")
+            return False
+
+    except (tarfile.TarError, zipfile.BadZipFile, OSError, RuntimeError) as e:
+        print(f"⚠️ Extraction failed: {e}")
+
+        # Cleanup only if the directory was created during extraction
+        if not was_existing and os.path.exists(path):
+            shutil.rmtree(path)
+
+        return False
+
+
+def _is_extracted(extract_path: str) -> bool:
+    """
+    Checks if the extraction was successful by veryfing that extract path is a dir of non-empty files
+    :param extract_path: Path where files should be extracted.
+    :return: True if extracted files exist, False otherwise.
+    """
+    return os.path.isdir(extract_path) and bool(os.listdir(extract_path))  # Ensure directory is non-empty
+
+
+class CompressedFileType(Enum):
+    ZIP = ".zip"
+    TAR = ".tar"
+    TARGZ = ".tar.gz"
+    TGX = ".tgz"
+    UNKNOWN = ""
+
+def _compressed_file_type(file_path: str) -> CompressedFileType:
+    """
+    Returns the file type of the file in file_path. Handles .ZIP, .TAR.GZ and .TAR exclusively
+    :param file_path: file path
+    :return:
+    """
+    if zipfile.is_zipfile(file_path):
+        return CompressedFileType.ZIP
+
+    if tarfile.is_tarfile(file_path):
+        # failed opening as TAR.GZ or TGZ results in it being a TAR
+        try:
+            with tarfile.open(file_path, "r:gz") as _:
+                return CompressedFileType.TARGZ
+        except tarfile.ReadError:
+            return CompressedFileType.TAR
+
+    return CompressedFileType.UNKNOWN
+
+
+def _download_file(url: str, verbose: bool, filename):
+    """
+    Downloads a file and saves it
+    :param url: URL to download file from
+    :param verbose: If true, prints the download progress bar
+    :param filename: name of the file in which to save
+    :return: Path to the downloaded file
+    """
+    # The following line should prevent occasionally occurring
+    # [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed (_ssl.c:847)
+    import ssl
+    ssl._create_default_https_context = ssl._create_unverified_context
+
+    import requests
+    try:
+        with requests.get(url, stream=True) as response:
+            response.raise_for_status()  # Raise an error for failed requests
+
+            # Get total file size (if available)
+            total_size = int(response.headers.get("content-length", 0))
+
+            # Open the file and write in chunks
+            with open(filename, "wb") as file, tqdm(
+                    total=total_size,
+                    unit="B",
+                    unit_scale=True,
+                    unit_divisor=1024,
+                    desc="Downloading",
+                    disable=not verbose  # Disable progress bar if verbose=False
+            ) as progress_bar:
+                for chunk in response.iter_content(chunk_size=8192):
+                    file.write(chunk)
+                    progress_bar.update(len(chunk))
+
+    except requests.RequestException as exception:
+        logger.error(f"Failed to download {url}: {exception}")
         raise
-    return True
+
+    return filename
 
 
 def get_file(
@@ -1671,49 +1764,14 @@ def get_file(
         logger.info("Downloading data from %s", url)
         try:
             for url_i in url_list:
-                try:
-                    from six.moves.urllib.error import HTTPError, URLError
-                    from six.moves.urllib.request import urlretrieve
-
-                    # The following two lines should prevent occasionally occurring
-                    # [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed (_ssl.c:847)
-                    import ssl
-
-                    ssl._create_default_https_context = ssl._create_unverified_context
-
-                    if verbose:
-                        with tqdm() as t_bar:
-                            # pylint: disable=cell-var-from-loop
-                            last_block = [0]
-
-                            def progress_bar(blocks: int = 1, block_size: int = 1, total_size: int | None = None):
-                                """
-                                :param blocks: Number of blocks transferred so far [default: 1].
-                                :param block_size: Size of each block (in tqdm units) [default: 1].
-                                :param total_size: Total size (in tqdm units). If [default: None] or -1, remains
-                                                   unchanged.
-                                """
-                                if total_size not in (None, -1):
-                                    t_bar.total = total_size
-                                displayed = t_bar.update((blocks - last_block[0]) * block_size)
-                                last_block[0] = blocks
-                                return displayed
-
-                            urlretrieve(url_i, full_path, reporthook=progress_bar)
-                    else:
-                        urlretrieve(url_i, full_path)
-
-                except HTTPError as exception:  # pragma: no cover
-                    logger.error(url_i, exception)
-                except URLError as exception:  # pragma: no cover
-                    logger.error(url_i, exception)
+                _download_file(url_i, verbose, full_path)
         except (Exception, KeyboardInterrupt):  # pragma: no cover
             if os.path.exists(full_path):
                 os.remove(full_path)
             raise
 
     if extract:
-        if not os.path.exists(extract_path):
+        if not _is_extracted(extract_path):
             _extract(full_path, path_)
         return extract_path
 
