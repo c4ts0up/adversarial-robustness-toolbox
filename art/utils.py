@@ -1631,7 +1631,7 @@ def _extract(file_path: str, destiny_path: str) -> bool:
         return False
 
     except Exception as e:
-        logger.error(f"Exraction failed for {file_path}: {e}")
+        logger.error(f"Extraction failed for {file_path}: {e}")
         return False
 
 
@@ -1681,7 +1681,7 @@ def _download_file(url: str, verbose: bool, file_path: str):
     Downloads a file and saves it
     :param url: URL to download file from
     :param verbose: If true, prints the download progress bar
-    :param filename: path with name where the file will be stored
+    :param file_path: path with name where the file will be stored
     :return: Path to the downloaded file
     """
     # The following line should prevent occasionally occurring
@@ -1790,11 +1790,13 @@ def get_file(
             if os.path.exists(full_path):
                 os.remove(full_path)
             raise
+    else:
+        downloaded_files_paths.append(compressed_downloaded_path)
 
     if extract:
-        for file in downloaded_files_paths:
-            if not _is_extracted(file):
-                _extract(file, path_)
+        for file_path in downloaded_files_paths:
+            if not _is_extracted(file_path):
+                _extract(file_path, path_)
         return extract_path
 
     return full_path
