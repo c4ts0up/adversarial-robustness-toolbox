@@ -21,6 +21,7 @@ Module providing convenience functions.
 
 from __future__ import absolute_import, division, print_function, unicode_literals, annotations
 
+import glob
 from enum import Enum
 import gzip
 import logging
@@ -1602,45 +1603,35 @@ def load_dataset(
     raise NotImplementedError(f"There is no loader for dataset '{name}'.")
 
 
-def _extract(full_path: str, path: str) -> bool:
+def _extract(file_path: str, destiny_path: str) -> bool:
     """
     Extracts a TAR, TAR.GZ, or ZIP archive to the given path.
 
-    :param full_path: Path to the compressed file.
-    :param path: Destination folder to extract the contents.
+    :param file_path: Path to the compressed file.
+    :param destiny_path: Destination folder to extract the contents.
     :return: True if extraction succeeds, False otherwise.
     """
     archive = None  # Ensure `archive` is initialized
-    was_existing = os.path.exists(path)
 
     try:
-        # Check if it's a TAR archive
-        if tarfile.is_tarfile(full_path):
-            mode = "r:gz" if full_path.endswith((".tar.gz", ".tgz")) else "r:"
-            with tarfile.open(full_path, mode) as archive:
-                archive.extractall(path)
-                print(f"✅ Extracted: {full_path} → {path}")
+        file_type = _compressed_file_type(file_path)
+
+        if file_type in {CompressedFileType.TAR, CompressedFileType.TARGZ, CompressedFileType.TGZ}:
+            mode = "r:gz" if file_type in [CompressedFileType.TARGZ, CompressedFileType.TGZ]  else "r:"
+            with tarfile.open(file_path, mode) as archive:
+                archive.extractall(destiny_path)
                 return True
 
-        # Check if it's a ZIP archive
-        elif zipfile.is_zipfile(full_path):
-            with zipfile.ZipFile(full_path) as archive:
-                archive.extractall(path)
-                print(f"✅ Extracted: {full_path} → {path}")
+        elif file_type in {CompressedFileType.ZIP, CompressedFileType.NPZ}:
+            with zipfile.ZipFile(file_path) as archive:
+                archive.extractall(destiny_path)
                 return True
 
-        # If it's neither TAR nor ZIP
-        else:
-            print(f"❌ ERROR: {full_path} is not a valid archive!")
-            return False
+        logger.error(f"Unsupported file type: {file_path}")
+        return False
 
-    except (tarfile.TarError, zipfile.BadZipFile, OSError, RuntimeError) as e:
-        print(f"⚠️ Extraction failed: {e}")
-
-        # Cleanup only if the directory was created during extraction
-        if not was_existing and os.path.exists(path):
-            shutil.rmtree(path)
-
+    except Exception as e:
+        logger.error(f"Exraction failed for {file_path}: {e}")
         return False
 
 
@@ -1655,19 +1646,24 @@ def _is_extracted(extract_path: str) -> bool:
 
 class CompressedFileType(Enum):
     ZIP = ".zip"
+    NPZ = ".npz"
     TAR = ".tar"
     TARGZ = ".tar.gz"
-    TGX = ".tgz"
+    TGZ = ".tgz"
     UNKNOWN = ""
 
 def _compressed_file_type(file_path: str) -> CompressedFileType:
     """
     Returns the file type of the file in file_path. Handles .ZIP, .TAR.GZ and .TAR exclusively
     :param file_path: file path
-    :return:
+    :return: enum value of the file type
     """
     if zipfile.is_zipfile(file_path):
-        return CompressedFileType.ZIP
+        with zipfile.ZipFile(file_path, "r") as archive:
+            # common NPZ check
+            if all(name.endswith(".npy") for name in archive.namelist()):
+                return CompressedFileType.NPZ 
+        return CompressedFileType.ZIP 
 
     if tarfile.is_tarfile(file_path):
         # failed opening as TAR.GZ or TGZ results in it being a TAR
@@ -1680,12 +1676,12 @@ def _compressed_file_type(file_path: str) -> CompressedFileType:
     return CompressedFileType.UNKNOWN
 
 
-def _download_file(url: str, verbose: bool, filename):
+def _download_file(url: str, verbose: bool, file_path: str):
     """
     Downloads a file and saves it
     :param url: URL to download file from
     :param verbose: If true, prints the download progress bar
-    :param filename: name of the file in which to save
+    :param filename: path with name where the file will be stored
     :return: Path to the downloaded file
     """
     # The following line should prevent occasionally occurring
@@ -1702,7 +1698,7 @@ def _download_file(url: str, verbose: bool, filename):
             total_size = int(response.headers.get("content-length", 0))
 
             # Open the file and write in chunks
-            with open(filename, "wb") as file, tqdm(
+            with open(file_path, "wb") as file, tqdm(
                     total=total_size,
                     unit="B",
                     unit_scale=True,
@@ -1718,7 +1714,29 @@ def _download_file(url: str, verbose: bool, filename):
         logger.error(f"Failed to download {url}: {exception}")
         raise
 
-    return filename
+    # adds the extension according to the compressed file type
+    # easier to explore, necessary to immediately extract
+    new_file_path = file_path
+    extension = _compressed_file_type(file_path).value
+    if not new_file_path.endswith(extension):
+        new_file_path += extension
+        os.rename(file_path, new_file_path)
+
+    return new_file_path
+
+
+def _is_compressed_downloaded(directory: str, filename: str) -> str | None:
+    """
+    Checks if the file has been downloaded in a compressed format
+
+    :param directory: path to the directory to search in
+    :param filename: single filename, no path
+    :return: full path of the compressed file (path + filename + extension) or None if it doesn't exist
+    """
+    search_pattern = os.path.join(directory, f"{filename}.*")  # Look for "data.*"
+    files = glob.glob(search_pattern)  # Get all matching files
+
+    return files[0] if files else None
 
 
 def get_file(
@@ -1753,26 +1771,30 @@ def get_file(
 
     if extract:
         extract_path = os.path.join(path_, filename)
-        full_path = extract_path + ".tar.gz"
-    else:
-        full_path = os.path.join(path_, filename)
+
+
+    compressed_downloaded_path = _is_compressed_downloaded(path_, filename)
 
     # Determine if dataset needs downloading
-    download = not os.path.exists(full_path)
+    download = compressed_downloaded_path is None
+    downloaded_files_paths = list()
+
+    full_path = os.path.join(path_, filename)
 
     if download:
         logger.info("Downloading data from %s", url)
         try:
             for url_i in url_list:
-                _download_file(url_i, verbose, full_path)
+               downloaded_files_paths.append( _download_file(url_i, verbose, full_path))
         except (Exception, KeyboardInterrupt):  # pragma: no cover
             if os.path.exists(full_path):
                 os.remove(full_path)
             raise
 
     if extract:
-        if not _is_extracted(extract_path):
-            _extract(full_path, path_)
+        for file in downloaded_files_paths:
+            if not _is_extracted(file):
+                _extract(file, path_)
         return extract_path
 
     return full_path
