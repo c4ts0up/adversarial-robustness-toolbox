@@ -1739,9 +1739,12 @@ def _is_compressed_downloaded(directory: str, filename: str) -> str | None:
     return files[0] if files else None
 
 
-def get_file(
-    filename: str, url: Union[str, list[str]], path: str | None = None, extract: bool = False, verbose: bool = False
-) -> str:
+def get_file(filename: str,
+             url: Union[str, list[str]],
+             path: str | None = None,
+             extract: bool = False,
+             verbose: bool = False,
+             nested_extraction: bool = True) -> str:
     """
     Downloads a file from a URL if it not already in the cache. The file at indicated by `url` is downloaded to the
     path `path` (default is ~/.art/data). and given the name `filename`. Files in tar, tar.gz, tar.bz, and zip formats
@@ -1752,6 +1755,8 @@ def get_file(
     :param path: Folder to store the download. If not specified, `~/.art/data` is used instead.
     :param extract: If true, tries to extract the archive.
     :param verbose: If true, print download progress bar.
+    :param nested_extraction: Only applies if `extract` is true. If true, the compressed file has a folder with the
+        data inside, which means files will be located there at the end of the extraction.
     :return: Path to the downloaded file.
     """
     if isinstance(url, str):
@@ -1787,19 +1792,21 @@ def get_file(
             for url_i in url_list:
                downloaded_files_paths.append( _download_file(url_i, verbose, full_path))
         except (Exception, KeyboardInterrupt):  # pragma: no cover
-            if os.path.exists(full_path):
+            if os.path.exists(full_path): # FIXME did this change with the change in downloads?
                 os.remove(full_path)
             raise
     else:
         downloaded_files_paths.append(compressed_downloaded_path)
 
     if extract:
+        destiny_path = path_ if nested_extraction else full_path
         for file_path in downloaded_files_paths:
             if not _is_extracted(file_path):
-                _extract(file_path, path_)
-        return extract_path
+                _extract(file_path, destiny_path)
 
-    return full_path
+        return full_path
+
+    return compressed_downloaded_path
 
 
 def make_directory(dir_path: str) -> None:
