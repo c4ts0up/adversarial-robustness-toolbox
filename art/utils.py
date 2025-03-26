@@ -1551,6 +1551,7 @@ def load_unsw_nb15(frac: float = 1.0, test_size: float = 0.2) -> tuple[tuple[Any
         "unsw-nb15",
         path=config.ART_DATA_PATH,
         extract=True,
+        nested_extraction=False,
         url="https://www.kaggle.com/api/v1/datasets/download/mrwellsdavid/unsw-nb15"
     )
 
