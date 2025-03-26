@@ -1734,7 +1734,9 @@ def _is_compressed_downloaded(directory: str, filename: str) -> str | None:
     :param filename: single filename, no path
     :return: full path of the compressed file (path + filename + extension) or None if it doesn't exist
     """
-    search_pattern = os.path.join(directory, f"{filename}.*")  # Look for "data.*"
+    # extensions cause the regex to fail. However, the given filename might already be extensionless
+    filename_extensionless = os.path.splitext(filename)[0]
+    search_pattern = os.path.join(directory, f"{filename_extensionless}.*")  # Look for "data.*"
     files = glob.glob(search_pattern)  # Get all matching files
 
     return files[0] if files else None
@@ -1775,10 +1777,6 @@ def get_file(filename: str,
     if not os.path.exists(path_):
         os.makedirs(path_)
 
-    if extract:
-        extract_path = os.path.join(path_, filename)
-
-
     compressed_downloaded_path = _is_compressed_downloaded(path_, filename)
 
     # Determine if dataset needs downloading
@@ -1800,10 +1798,10 @@ def get_file(filename: str,
         downloaded_files_paths.append(compressed_downloaded_path)
 
     if extract:
-        destiny_path = path_ if nested_extraction else full_path
+        extract_path = path_ if nested_extraction else full_path
         for file_path in downloaded_files_paths:
             if not _is_extracted(file_path):
-                _extract(file_path, destiny_path)
+                _extract(file_path, extract_path)
 
         return full_path
 
