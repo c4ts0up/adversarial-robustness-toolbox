@@ -1562,16 +1562,16 @@ def load_unsw_nb15(frac: float = 1.0, test_size: float = 0.2) -> tuple[tuple[Any
         if re.match(r"UNSW-NB15_\d+\.csv$", file)
     ]
 
+    # Network data order is important to understand timelines of attacks
+    csv_files = sorted(csv_files, key=lambda x: int(re.search(r"(\d+)", x).group()))
+
     # Loads the feature names - needed for the dataset columns
     features_df = pd.read_csv(os.path.join(dataset_path, "NUSW-NB15_features.csv"), encoding="cp1252")  # No, it's not MY typo; it's a typo in the dataset
     feature_names = features_df["Name"].tolist()
 
-    # Network data order is important to understand timelines of attacks
-    csv_files = sorted(csv_files, key=lambda x: int(re.search(r"(\d+)", x).group()))
-
     # Load and combine them into one DataFrame
     dfs = [pd.read_csv(file, header=None, dtype=str, encoding="utf-8-sig", low_memory=True) for file in csv_files]
-    unsw_df = pd.concat(dfs, ignore_index=True).sample(frac=frac)
+    unsw_df = pd.concat(dfs, ignore_index=True).sample(frac=frac, random_state=42)
 
     unsw_df.columns = feature_names
     y_full = unsw_df[["attack_cat"]]
