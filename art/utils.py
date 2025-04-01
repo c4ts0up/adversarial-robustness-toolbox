@@ -1547,6 +1547,27 @@ def load_unsw_nb15(frac: float = 1.0, test_size: float = 0.2) -> tuple[tuple[Any
     :return: `(x_train, y_train), (x_test, y_test)`
     """
 
+    def _feature_name_fixes(features: list[str]) -> list[str]:
+        """
+        Fixes feature names for flawless handling later on
+        :param features: list of features
+        :return: list of clean feature names
+        """
+        # 1. Lowercase for feature names
+        fixed_features = {f.lower() for f in features}
+
+        # 2. Remapping of feature names
+        feature_name_remaps = {
+            "ct_src_ ltm": "ct_src_ltm" # typo extra space
+        }
+
+        for original, remap in feature_name_remaps.items():
+            if original in fixed_features:
+                fixed_features.remove(original)
+                fixed_features.add(remap)
+
+        return list(fixed_features)
+
     dataset_path = get_file(
         "unsw-nb15",
         path=config.ART_DATA_PATH,
@@ -1568,15 +1589,15 @@ def load_unsw_nb15(frac: float = 1.0, test_size: float = 0.2) -> tuple[tuple[Any
     # Loads the feature names - needed for the dataset columns
     features_df = pd.read_csv(os.path.join(dataset_path, "NUSW-NB15_features.csv"), encoding="cp1252")  # No, it's not MY typo; it's a typo in the dataset
     # feature names are put in smallcase for easier handling
-    feature_names = [f.lower() for f in features_df["Name"].tolist()]
+    feature_names = _feature_name_fixes(features_df["Name"].tolist())
 
     # Load and combine them into one DataFrame
     dfs = [pd.read_csv(file, header=None, dtype=str, encoding="utf-8-sig", low_memory=True) for file in csv_files]
     unsw_df = pd.concat(dfs, ignore_index=True).sample(frac=frac, random_state=42)
 
     unsw_df.columns = feature_names
-    y_full = unsw_df[["attack_cat"]]
-    x_full = unsw_df.drop("attack_cat", axis=1)
+    y_full = unsw_df[["label"]]
+    x_full = unsw_df.drop(["attack_cat", "label"], axis=1) # attack_cat is dropped to prevent data leakage
 
     x_train, x_test, y_train, y_test = train_test_split(x_full, y_full, test_size=test_size)
 
@@ -1606,6 +1627,7 @@ def load_dataset(
         return load_nursery()
     if "diabetes" in name:
         return load_diabetes()
+    # TODO: add UNSW_NB15 here. Need to find min, max for dataset. Unsure how.
 
     raise NotImplementedError(f"There is no loader for dataset '{name}'.")
 
