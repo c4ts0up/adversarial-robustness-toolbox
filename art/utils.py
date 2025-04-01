@@ -1567,7 +1567,8 @@ def load_unsw_nb15(frac: float = 1.0, test_size: float = 0.2) -> tuple[tuple[Any
 
     # Loads the feature names - needed for the dataset columns
     features_df = pd.read_csv(os.path.join(dataset_path, "NUSW-NB15_features.csv"), encoding="cp1252")  # No, it's not MY typo; it's a typo in the dataset
-    feature_names = features_df["Name"].tolist()
+    # feature names are put in smallcase for easier handling
+    feature_names = [f.lower() for f in features_df["Name"].tolist()]
 
     # Load and combine them into one DataFrame
     dfs = [pd.read_csv(file, header=None, dtype=str, encoding="utf-8-sig", low_memory=True) for file in csv_files]
