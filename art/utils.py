@@ -1547,26 +1547,40 @@ def load_unsw_nb15(frac: float = 1.0, test_size: float = 0.2) -> tuple[tuple[Any
     :return: `(x_train, y_train), (x_test, y_test)`
     """
 
-    def _feature_name_fixes(features: list[str]) -> list[str]:
+    def _feature_df_fix(features: pd.DataFrame) -> pd.DataFrame:
         """
-        Fixes feature names for flawless handling later on
+        Fixes feature DF for flawless integration
         :param features: list of features
         :return: list of clean feature names
         """
         # 1. Lowercase for feature names
-        fixed_features = {f.lower() for f in features}
+        features["Name"] = features["Name"].str.lower()
 
         # 2. Remapping of feature names
         feature_name_remaps = {
             "ct_src_ ltm": "ct_src_ltm" # typo extra space
         }
 
-        for original, remap in feature_name_remaps.items():
-            if original in fixed_features:
-                fixed_features.remove(original)
-                fixed_features.add(remap)
+        features.replace(feature_name_remaps, inplace=True)
 
-        return list(fixed_features)
+        # 3. Lowercase feature types
+        features["Type "] = features["Type "].str.lower()
+
+        return features
+
+    def _assign_column_properties(df: pd.DataFrame, features: pd.DataFrame) -> pd.DataFrame:
+        """
+        Using the features DF, it assigns the name of the column and typecasts the column with the assigend type
+        :param df: dataframe to modify according to the features
+        :param features: features DF with "Name" for column names and "Type" for types
+        :return: modified dataframe
+        """
+
+        # 1. Assign column names
+        df.columns = features["Name"].tolist()
+
+        return df
+
 
     dataset_path = get_file(
         "unsw-nb15",
@@ -1589,13 +1603,13 @@ def load_unsw_nb15(frac: float = 1.0, test_size: float = 0.2) -> tuple[tuple[Any
     # Loads the feature names - needed for the dataset columns
     features_df = pd.read_csv(os.path.join(dataset_path, "NUSW-NB15_features.csv"), encoding="cp1252")  # No, it's not MY typo; it's a typo in the dataset
     # feature names are put in smallcase for easier handling
-    feature_names = _feature_name_fixes(features_df["Name"].tolist())
+    features_df = _feature_df_fix(features_df)
 
     # Load and combine them into one DataFrame
-    dfs = [pd.read_csv(file, header=None, dtype=str, encoding="utf-8-sig", low_memory=True) for file in csv_files]
+    dfs = [pd.read_csv(file, header=None, encoding="utf-8-sig", low_memory=True) for file in csv_files]
     unsw_df = pd.concat(dfs, ignore_index=True).sample(frac=frac, random_state=42)
 
-    unsw_df.columns = feature_names
+    unsw_df = _assign_column_properties(unsw_df, features_df)
     y_full = unsw_df[["label"]]
     x_full = unsw_df.drop(["attack_cat", "label"], axis=1) # attack_cat is dropped to prevent data leakage
 
