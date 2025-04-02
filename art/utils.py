@@ -22,18 +22,16 @@ Module providing convenience functions.
 from __future__ import absolute_import, division, print_function, unicode_literals, annotations
 
 import glob
-from enum import Enum
-import gzip
 import logging
 import math
 import os
 import re
-import shutil
 import sys
 import tarfile
 import warnings
 import zipfile
 from collections.abc import Callable
+from enum import Enum
 from functools import wraps
 from inspect import signature
 from typing import TYPE_CHECKING, Optional, Tuple, Union, Any
@@ -41,7 +39,6 @@ from typing import TYPE_CHECKING, Optional, Tuple, Union, Any
 import numpy as np
 import pandas as pd
 import six
-from IPython.testing.tools import full_path
 from scipy.special import gammainc
 from sklearn.model_selection import train_test_split
 from tqdm.auto import tqdm
