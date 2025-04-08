@@ -1534,7 +1534,7 @@ def load_nursery(
 
     return (x_train, y_train), (x_test, y_test), min_, max_
 
-
+# FIXME: 25% of CCA-UD unit tests' time is spent loading this. Choose Parquet.
 def load_unsw_nb15(frac: float = 1.0, test_size: float = 0.2) -> tuple[tuple[Any, Any], tuple[Any, Any]]:
     """
     Loads the UNSW-NB15 dataset from `config.ART_DATA_PATH` or downloads it if necessary.
