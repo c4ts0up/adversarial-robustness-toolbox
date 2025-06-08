@@ -25,6 +25,9 @@ then
     pytest --cov-report=xml --cov=art --cov-append  -q -vv tests/defences/detector/poison/test_spectral_signature_defense.py --framework=$framework --durations=0
     if [[ $? -ne 0 ]]; then exit_code=1; echo "Failed defences/detector/poison/test_spectral_signature_defense.py tests"; fi
 
+    pytest --cov-report=xml --cov=art --cov-append  -q -vv tests/defences/detector/poison/test_clustering_centroid_analysis.py --framework=$framework --durations=0
+    if [[ $? -ne 0 ]]; then exit_code=1; echo "Failed defences/detector/poison/test_clustering_centroid_analysis.py tests"; fi
+
     pytest --cov-report=xml --cov=art --cov-append  -q -vv tests/defences/preprocessor --framework=$framework --durations=0
     if [[ $? -ne 0 ]]; then exit_code=1; echo "Failed defences/preprocessor tests"; fi
 
@@ -162,6 +165,7 @@ else
 
     declare -a art=("tests/test_data_generators.py" \
                     "tests/test_optimizers.py" \
+                    "tests/test_performance_monitor.py" \
                     "tests/test_utils.py" \
                     "tests/test_visualization.py" )
 
