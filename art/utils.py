@@ -1534,87 +1534,6 @@ def load_nursery(
 
     return (x_train, y_train), (x_test, y_test), min_, max_
 
-# FIXME: 25% of CCA-UD unit tests' time is spent loading this. Choose Parquet.
-def load_unsw_nb15(frac: float = 1.0, test_size: float = 0.2) -> tuple[tuple[Any, Any], tuple[Any, Any]]:
-    """
-    Loads the UNSW-NB15 dataset from `config.ART_DATA_PATH` or downloads it if necessary.
-
-    :param frac: percentage of the set to select
-    :param test_size: percentage of the selected set to use for testing. Remaining percentage is for training
-    :return: `(x_train, y_train), (x_test, y_test)`
-    """
-
-    def _feature_df_fix(features: pd.DataFrame) -> pd.DataFrame:
-        """
-        Fixes feature DF for flawless integration
-        :param features: list of features
-        :return: list of clean feature names
-        """
-        # 1. Lowercase for feature names
-        features["Name"] = features["Name"].str.lower()
-
-        # 2. Remapping of feature names
-        feature_name_remaps = {
-            "ct_src_ ltm": "ct_src_ltm" # typo extra space
-        }
-
-        features.replace(feature_name_remaps, inplace=True)
-
-        # 3. Lowercase feature types
-        features["Type "] = features["Type "].str.lower()
-
-        return features
-
-    def _assign_column_properties(df: pd.DataFrame, features: pd.DataFrame) -> pd.DataFrame:
-        """
-        Using the features DF, it assigns the name of the column and typecasts the column with the assigend type
-        :param df: dataframe to modify according to the features
-        :param features: features DF with "Name" for column names and "Type" for types
-        :return: modified dataframe
-        """
-
-        # 1. Assign column names
-        df.columns = features["Name"].tolist()
-
-        return df
-
-
-    dataset_path = get_file(
-        "unsw-nb15",
-        path=config.ART_DATA_PATH,
-        extract=True,
-        nested_extraction=False,
-        url="https://www.kaggle.com/api/v1/datasets/download/mrwellsdavid/unsw-nb15"
-    )
-
-    # Finds all numerical dataset parts
-    csv_files = [
-        os.path.join(dataset_path, file)
-        for file in os.listdir(dataset_path)
-        if re.match(r"UNSW-NB15_\d+\.csv$", file)
-    ]
-
-    # Network data order is important to understand timelines of attacks
-    csv_files = sorted(csv_files, key=lambda x: int(re.search(r"(\d+)", x).group()))
-
-    # Loads the feature names - needed for the dataset columns
-    features_df = pd.read_csv(os.path.join(dataset_path, "NUSW-NB15_features.csv"), encoding="cp1252")  # No, it's not MY typo; it's a typo in the dataset
-    # feature names are put in smallcase for easier handling
-    features_df = _feature_df_fix(features_df)
-
-    # Load and combine them into one DataFrame
-    dfs = [pd.read_csv(file, header=None, encoding="utf-8-sig", low_memory=True) for file in csv_files]
-    unsw_df = pd.concat(dfs, ignore_index=True).sample(frac=frac, random_state=42)
-
-    unsw_df = _assign_column_properties(unsw_df, features_df)
-    y_full = unsw_df[["label"]]
-    x_full = unsw_df.drop(["attack_cat", "label"], axis=1) # attack_cat is dropped to prevent data leakage
-
-    x_train, x_test, y_train, y_test = train_test_split(x_full, y_full, test_size=test_size)
-
-    return (x_train, y_train), (x_test, y_test)
-
-
 def load_dataset(
     name: str,
 ) -> DATASET_TYPE:
@@ -1638,7 +1557,6 @@ def load_dataset(
         return load_nursery()
     if "diabetes" in name:
         return load_diabetes()
-    # TODO: add UNSW_NB15 here. Need to find min, max for dataset. Unsure how.
 
     raise NotImplementedError(f"There is no loader for dataset '{name}'.")
 
@@ -1830,7 +1748,7 @@ def get_file(filename: str,
             for url_i in url_list:
                downloaded_files_paths.append( _download_file(url_i, verbose, full_path))
         except (Exception, KeyboardInterrupt):  # pragma: no cover
-            if os.path.exists(full_path): # FIXME did this change with the change in downloads?
+            if os.path.exists(full_path):
                 os.remove(full_path)
             raise
     else:
