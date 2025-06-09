@@ -21,26 +21,22 @@ Module providing convenience functions.
 
 from __future__ import absolute_import, division, print_function, unicode_literals, annotations
 
-import glob
+from collections.abc import Callable
 import logging
 import math
 import os
-import re
+import shutil
 import sys
 import tarfile
 import warnings
 import zipfile
-from collections.abc import Callable
-from enum import Enum
 from functools import wraps
 from inspect import signature
-from typing import TYPE_CHECKING, Optional, Tuple, Union, Any
+from typing import TYPE_CHECKING, Optional, Tuple, Union
 
 import numpy as np
-import pandas as pd
 import six
 from scipy.special import gammainc
-from sklearn.model_selection import train_test_split
 from tqdm.auto import tqdm
 
 from art import config
@@ -1534,6 +1530,7 @@ def load_nursery(
 
     return (x_train, y_train), (x_test, y_test), min_, max_
 
+
 def load_dataset(
     name: str,
 ) -> DATASET_TYPE:
@@ -1561,150 +1558,37 @@ def load_dataset(
     raise NotImplementedError(f"There is no loader for dataset '{name}'.")
 
 
-def _extract(file_path: str, destiny_path: str) -> bool:
-    """
-    Extracts a TAR, TAR.GZ, or ZIP archive to the given path.
-
-    :param file_path: Path to the compressed file.
-    :param destiny_path: Destination folder to extract the contents.
-    :return: True if extraction succeeds, False otherwise.
-    """
-    archive = None  # Ensure `archive` is initialized
-
-    try:
-        file_type = _compressed_file_type(file_path)
-
-        if file_type in {CompressedFileType.TAR, CompressedFileType.TARGZ, CompressedFileType.TGZ}:
-            mode = "r:gz" if file_type in [CompressedFileType.TARGZ, CompressedFileType.TGZ]  else "r:"
-            with tarfile.open(file_path, mode) as archive:
-                archive.extractall(destiny_path)
-                return True
-
-        elif file_type in {CompressedFileType.ZIP, CompressedFileType.NPZ}:
-            with zipfile.ZipFile(file_path) as archive:
-                archive.extractall(destiny_path)
-                return True
-
-        logger.error(f"Unsupported file type: {file_path}")
+def _extract(full_path: str, path: str) -> bool:
+    archive: Union[zipfile.ZipFile, tarfile.TarFile]
+    if full_path.endswith("tar"):  # pragma: no cover
+        if tarfile.is_tarfile(full_path):
+            archive = tarfile.open(full_path, "r:")
+    elif full_path.endswith("tar.gz"):  # pragma: no cover
+        if tarfile.is_tarfile(full_path):
+            archive = tarfile.open(full_path, "r:gz")
+    elif full_path.endswith("zip"):  # pragma: no cover
+        if zipfile.is_zipfile(full_path):
+            archive = zipfile.ZipFile(full_path)  # pylint: disable=consider-using-with
+        else:
+            return False
+    else:
         return False
 
-    except Exception as e:
-        logger.error(f"Extraction failed for {file_path}: {e}")
-        return False
-
-
-def _is_extracted(extract_path: str) -> bool:
-    """
-    Checks if the extraction was successful by veryfing that extract path is a dir of non-empty files
-    :param extract_path: Path where files should be extracted.
-    :return: True if extracted files exist, False otherwise.
-    """
-    return os.path.isdir(extract_path) and bool(os.listdir(extract_path))  # Ensure directory is non-empty
-
-
-class CompressedFileType(Enum):
-    ZIP = ".zip"
-    NPZ = ".npz"
-    TAR = ".tar"
-    TARGZ = ".tar.gz"
-    TGZ = ".tgz"
-    UNKNOWN = ""
-
-def _compressed_file_type(file_path: str) -> CompressedFileType:
-    """
-    Returns the file type of the file in file_path. Handles .ZIP, .TAR.GZ and .TAR exclusively
-    :param file_path: file path
-    :return: enum value of the file type
-    """
-    if zipfile.is_zipfile(file_path):
-        with zipfile.ZipFile(file_path, "r") as archive:
-            # common NPZ check
-            if all(name.endswith(".npy") for name in archive.namelist()):
-                return CompressedFileType.NPZ 
-        return CompressedFileType.ZIP 
-
-    if tarfile.is_tarfile(file_path):
-        # failed opening as TAR.GZ or TGZ results in it being a TAR
-        try:
-            with tarfile.open(file_path, "r:gz") as _:
-                return CompressedFileType.TARGZ
-        except tarfile.ReadError:
-            return CompressedFileType.TAR
-
-    return CompressedFileType.UNKNOWN
-
-
-def _download_file(url: str, verbose: bool, file_path: str):
-    """
-    Downloads a file and saves it
-    :param url: URL to download file from
-    :param verbose: If true, prints the download progress bar
-    :param file_path: path with name where the file will be stored
-    :return: Path to the downloaded file
-    """
-    # The following line should prevent occasionally occurring
-    # [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed (_ssl.c:847)
-    import ssl
-    ssl._create_default_https_context = ssl._create_unverified_context
-
-    import requests
     try:
-        with requests.get(url, stream=True) as response:
-            response.raise_for_status()  # Raise an error for failed requests
-
-            # Get total file size (if available)
-            total_size = int(response.headers.get("content-length", 0))
-
-            # Open the file and write in chunks
-            with open(file_path, "wb") as file, tqdm(
-                    total=total_size,
-                    unit="B",
-                    unit_scale=True,
-                    unit_divisor=1024,
-                    desc="Downloading",
-                    disable=not verbose  # Disable progress bar if verbose=False
-            ) as progress_bar:
-                for chunk in response.iter_content(chunk_size=8192):
-                    file.write(chunk)
-                    progress_bar.update(len(chunk))
-
-    except requests.RequestException as exception:
-        logger.error(f"Failed to download {url}: {exception}")
+        archive.extractall(path)
+    except (tarfile.TarError, RuntimeError, KeyboardInterrupt):  # pragma: no cover
+        if os.path.exists(path):
+            if os.path.isfile(path):
+                os.remove(path)
+            else:
+                shutil.rmtree(path)
         raise
-
-    # adds the extension according to the compressed file type
-    # easier to explore, necessary to immediately extract
-    new_file_path = file_path
-    extension = _compressed_file_type(file_path).value
-    if not new_file_path.endswith(extension):
-        new_file_path += extension
-        os.rename(file_path, new_file_path)
-
-    return new_file_path
+    return True
 
 
-def _is_compressed_downloaded(directory: str, filename: str) -> str | None:
-    """
-    Checks if the file has been downloaded in a compressed format
-
-    :param directory: path to the directory to search in
-    :param filename: single filename, no path
-    :return: full path of the compressed file (path + filename + extension) or None if it doesn't exist
-    """
-    # extensions cause the regex to fail. However, the given filename might already be extensionless
-    filename_extensionless = os.path.splitext(filename)[0]
-    search_pattern = os.path.join(directory, f"{filename_extensionless}.*")  # Look for "data.*"
-    files = glob.glob(search_pattern)  # Get all matching files
-
-    return files[0] if files else None
-
-
-def get_file(filename: str,
-             url: Union[str, list[str]],
-             path: str | None = None,
-             extract: bool = False,
-             verbose: bool = False,
-             nested_extraction: bool = True) -> str:
+def get_file(
+    filename: str, url: Union[str, list[str]], path: str | None = None, extract: bool = False, verbose: bool = False
+) -> str:
     """
     Downloads a file from a URL if it not already in the cache. The file at indicated by `url` is downloaded to the
     path `path` (default is ~/.art/data). and given the name `filename`. Files in tar, tar.gz, tar.bz, and zip formats
@@ -1715,8 +1599,6 @@ def get_file(filename: str,
     :param path: Folder to store the download. If not specified, `~/.art/data` is used instead.
     :param extract: If true, tries to extract the archive.
     :param verbose: If true, print download progress bar.
-    :param nested_extraction: Only applies if `extract` is true. If true, the compressed file has a folder with the
-        data inside, which means files will be located there at the end of the extraction.
     :return: Path to the downloaded file.
     """
     if isinstance(url, str):
@@ -1734,35 +1616,66 @@ def get_file(filename: str,
     if not os.path.exists(path_):
         os.makedirs(path_)
 
-    compressed_downloaded_path = _is_compressed_downloaded(path_, filename)
+    if extract:
+        extract_path = os.path.join(path_, filename)
+        full_path = extract_path + ".tar.gz"
+    else:
+        full_path = os.path.join(path_, filename)
 
     # Determine if dataset needs downloading
-    download = compressed_downloaded_path is None
-    downloaded_files_paths = list()
-
-    full_path = os.path.join(path_, filename)
+    download = not os.path.exists(full_path)
 
     if download:
         logger.info("Downloading data from %s", url)
         try:
             for url_i in url_list:
-               downloaded_files_paths.append( _download_file(url_i, verbose, full_path))
+                try:
+                    from six.moves.urllib.error import HTTPError, URLError
+                    from six.moves.urllib.request import urlretrieve
+
+                    # The following two lines should prevent occasionally occurring
+                    # [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed (_ssl.c:847)
+                    import ssl
+
+                    ssl._create_default_https_context = ssl._create_unverified_context
+
+                    if verbose:
+                        with tqdm() as t_bar:
+                            # pylint: disable=cell-var-from-loop
+                            last_block = [0]
+
+                            def progress_bar(blocks: int = 1, block_size: int = 1, total_size: int | None = None):
+                                """
+                                :param blocks: Number of blocks transferred so far [default: 1].
+                                :param block_size: Size of each block (in tqdm units) [default: 1].
+                                :param total_size: Total size (in tqdm units). If [default: None] or -1, remains
+                                                   unchanged.
+                                """
+                                if total_size not in (None, -1):
+                                    t_bar.total = total_size
+                                displayed = t_bar.update((blocks - last_block[0]) * block_size)
+                                last_block[0] = blocks
+                                return displayed
+
+                            urlretrieve(url_i, full_path, reporthook=progress_bar)
+                    else:
+                        urlretrieve(url_i, full_path)
+
+                except HTTPError as exception:  # pragma: no cover
+                    logger.error(url_i, exception)
+                except URLError as exception:  # pragma: no cover
+                    logger.error(url_i, exception)
         except (Exception, KeyboardInterrupt):  # pragma: no cover
             if os.path.exists(full_path):
                 os.remove(full_path)
             raise
-    else:
-        downloaded_files_paths.append(compressed_downloaded_path)
 
     if extract:
-        extract_path = path_ if nested_extraction else full_path
-        for file_path in downloaded_files_paths:
-            if not _is_extracted(file_path):
-                _extract(file_path, extract_path)
+        if not os.path.exists(extract_path):
+            _extract(full_path, path_)
+        return extract_path
 
-        return full_path
-
-    return compressed_downloaded_path
+    return full_path
 
 
 def make_directory(dir_path: str) -> None:
@@ -1850,7 +1763,7 @@ def performance_diff(
     test_data: np.ndarray,
     test_labels: np.ndarray,
     perf_function: Union[str, Callable] = "accuracy",
-    **kwargs,
+        **kwargs,
 ) -> float:
     """
     Calculates the difference in performance between two models on the test_data with a performance function.
