@@ -1763,7 +1763,7 @@ def performance_diff(
     test_data: np.ndarray,
     test_labels: np.ndarray,
     perf_function: Union[str, Callable] = "accuracy",
-        **kwargs,
+    **kwargs,
 ) -> float:
     """
     Calculates the difference in performance between two models on the test_data with a performance function.
